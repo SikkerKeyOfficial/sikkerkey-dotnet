@@ -1,0 +1,12 @@
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/SikkerKey.GeneratedMSBuildEditorConfig.editorconfig
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/SikkerKey.AssemblyInfoInputs.cache
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/SikkerKey.AssemblyInfo.cs
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/SikkerKey.csproj.CoreCompileInputs.cache
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/bin/Debug/net8.0/SikkerKey.deps.json
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/bin/Debug/net8.0/SikkerKey.dll
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/bin/Debug/net8.0/SikkerKey.pdb
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/SikkerKey.csproj.AssemblyReference.cache
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/SikkerKey.dll
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/refint/SikkerKey.dll
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/SikkerKey.pdb
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/ref/SikkerKey.dll
