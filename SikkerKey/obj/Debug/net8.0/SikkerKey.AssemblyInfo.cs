@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SikkerKey")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a3f6bc6d6e12f0e14ff932ebbcde81b019095263")]
 [assembly: System.Reflection.AssemblyProductAttribute("SikkerKey")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SikkerKey")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

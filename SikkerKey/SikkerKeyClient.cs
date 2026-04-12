@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,6 +8,18 @@ namespace SikkerKey;
 
 /// <summary>Secret metadata returned by list operations.</summary>
 public record SecretListItem(string Id, string Name, string? FieldNames, string? ProjectId);
+
+/// <summary>Status of a watched secret change.</summary>
+public enum WatchStatus { Changed, Deleted, AccessDenied, Error }
+
+/// <summary>Event delivered to a watch callback when a secret changes.</summary>
+public record WatchEvent(
+    string SecretId,
+    WatchStatus Status,
+    string? Value = null,
+    Dictionary<string, string>? Fields = null,
+    string? Error = null
+);
 
 /// <summary>
 /// SikkerKey SDK client — manage secrets from a SikkerKey vault.
@@ -18,7 +31,7 @@ public record SecretListItem(string Id, string Name, string? FieldNames, string?
 /// </code>
 /// </para>
 /// </summary>
-public sealed class SikkerKeyClient
+public sealed class SikkerKeyClient : IDisposable
 {
     private readonly Identity _identity;
     private readonly Ed25519PrivateKey _privateKey;
@@ -27,6 +40,13 @@ public sealed class SikkerKeyClient
     private static readonly HashSet<int> RetryableCodes = [429, 503];
     private const int MaxRetries = 3;
     private static readonly int[] BackoffMs = [1000, 2000, 4000];
+
+    private readonly ConcurrentDictionary<string, Action<WatchEvent>> _watchers = new();
+    private CancellationTokenSource? _pollCts;
+    private Task? _pollTask;
+    private int _pollIntervalMs = 15_000;
+    private readonly object _pollLock = new();
+    private bool _disposed;
 
     private SikkerKeyClient(Identity identity, Ed25519PrivateKey privateKey)
     {
@@ -128,6 +148,174 @@ public sealed class SikkerKeyClient
             result[envName] = val;
         }
         return result;
+    }
+
+    // ── Watch ──
+
+    /// <summary>
+    /// Register a callback for changes to a secret. Starts background polling if not already running.
+    /// The callback is invoked on the polling thread when the secret changes, is deleted, or access is denied.
+    /// </summary>
+    public void Watch(string secretId, Action<WatchEvent> callback)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(secretId);
+        ArgumentNullException.ThrowIfNull(callback);
+
+        _watchers[secretId] = callback;
+        EnsurePolling();
+    }
+
+    /// <summary>
+    /// Remove the watch callback for a secret. Stops background polling if no watches remain.
+    /// </summary>
+    public void Unwatch(string secretId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _watchers.TryRemove(secretId, out _);
+
+        if (_watchers.IsEmpty)
+            StopPolling();
+    }
+
+    /// <summary>
+    /// Set the polling interval in seconds. Minimum 10 seconds. Default is 15.
+    /// Takes effect on the next poll cycle.
+    /// </summary>
+    public void SetPollInterval(int seconds)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _pollIntervalMs = Math.Max(10, seconds) * 1000;
+    }
+
+    /// <summary>
+    /// Cancel all watches and stop background polling.
+    /// </summary>
+    public void Close()
+    {
+        StopPolling();
+        _watchers.Clear();
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        Close();
+        _http.Dispose();
+    }
+
+    private void EnsurePolling()
+    {
+        lock (_pollLock)
+        {
+            if (_pollTask is { IsCompleted: false }) return;
+
+            _pollCts = new CancellationTokenSource();
+            var token = _pollCts.Token;
+            _pollTask = Task.Run(async () => await PollLoopAsync(token), token);
+        }
+    }
+
+    private void StopPolling()
+    {
+        lock (_pollLock)
+        {
+            if (_pollCts == null) return;
+            _pollCts.Cancel();
+            _pollCts.Dispose();
+            _pollCts = null;
+            _pollTask = null;
+        }
+    }
+
+    private async Task PollLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(_pollIntervalMs, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            var ids = _watchers.Keys.ToList();
+            if (ids.Count == 0) return;
+
+            Dictionary<string, JsonElement>? changes;
+            try
+            {
+                var payload = JsonSerializer.Serialize(new { watch = ids });
+                var body = await RequestAsync("POST", "/v1/secrets/poll", payload);
+                var doc = JsonDocument.Parse(body).RootElement;
+                changes = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+                    doc.GetProperty("changes").GetRawText());
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch
+            {
+                // Poll request failed - skip this cycle, retry next interval
+                continue;
+            }
+
+            if (changes == null) continue;
+
+            foreach (var (secretId, statusElement) in changes)
+            {
+                if (!_watchers.TryGetValue(secretId, out var callback)) continue;
+
+                var status = statusElement.GetProperty("status").GetString();
+
+                switch (status)
+                {
+                    case "changed":
+                        try
+                        {
+                            var value = await GetSecretAsync(secretId);
+                            Dictionary<string, string>? fields = null;
+                            try
+                            {
+                                fields = JsonSerializer.Deserialize<Dictionary<string, string>>(value);
+                            }
+                            catch
+                            {
+                                // Not a structured secret - that's fine
+                            }
+                            callback(new WatchEvent(secretId, WatchStatus.Changed, value, fields));
+                        }
+                        catch (Exception ex)
+                        {
+                            callback(new WatchEvent(secretId, WatchStatus.Error, Error: ex.Message));
+                        }
+                        break;
+
+                    case "deleted":
+                        callback(new WatchEvent(secretId, WatchStatus.Deleted));
+                        _watchers.TryRemove(secretId, out _);
+                        break;
+
+                    case "access_denied":
+                        callback(new WatchEvent(secretId, WatchStatus.AccessDenied));
+                        _watchers.TryRemove(secretId, out _);
+                        break;
+
+                    default:
+                        callback(new WatchEvent(secretId, WatchStatus.Error,
+                            Error: $"Unknown poll status: {status}"));
+                        break;
+                }
+            }
+
+            if (_watchers.IsEmpty)
+                return;
+        }
     }
 
     // ── List Vaults ──

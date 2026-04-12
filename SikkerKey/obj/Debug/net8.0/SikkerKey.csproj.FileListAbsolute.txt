@@ -10,3 +10,4 @@
 /home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/refint/SikkerKey.dll
 /home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/SikkerKey.pdb
 /home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/ref/SikkerKey.dll
+/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/Debug/net8.0/SikkerKey.sourcelink.json

@@ -97,6 +97,73 @@ foreach (var (key, value) in await sk.ExportAsync())
 
 Structured secrets are flattened: `SECRET_NAME_FIELD_NAME`.
 
+## Watching for Changes
+
+Watch secrets for real-time updates. When a secret is rotated, updated, or deleted, the callback fires with the new value. Polling happens on a background task - your application is never blocked.
+
+```csharp
+sk.Watch("sk_db_password", (e) =>
+{
+    switch (e.Status)
+    {
+        case WatchStatus.Changed:
+            Console.WriteLine($"New value: {e.Value}");
+            // Structured secrets include parsed fields
+            if (e.Fields != null)
+                Console.WriteLine($"Fields: {string.Join(", ", e.Fields)}");
+            break;
+        case WatchStatus.Deleted:
+            Console.WriteLine("Secret was deleted");
+            break;
+        case WatchStatus.AccessDenied:
+            Console.WriteLine("Access revoked");
+            break;
+        case WatchStatus.Error:
+            Console.WriteLine($"Error: {e.Error}");
+            break;
+    }
+});
+```
+
+### Practical Example
+
+```csharp
+// Auto-rotate database credentials
+sk.Watch("sk_db_credentials", (e) =>
+{
+    if (e.Status == WatchStatus.Changed)
+    {
+        Database.ConfigureCredentials(e.Fields!["username"], e.Fields["password"]);
+    }
+});
+```
+
+### Poll Interval
+
+The default poll interval is 15 seconds. The server enforces a minimum of 10 seconds.
+
+```csharp
+sk.SetPollInterval(30); // seconds
+```
+
+### Stop Watching
+
+```csharp
+// Stop watching a specific secret
+sk.Unwatch("sk_db_password");
+
+// Stop all watches and shut down polling
+sk.Close();
+```
+
+`SikkerKeyClient` implements `IDisposable`:
+
+```csharp
+using var sk = SikkerKeyClient.Create("vault_abc123");
+sk.Watch("sk_api_key", OnChange);
+// Automatically disposed on scope exit
+```
+
 ## Multi-Vault
 
 ```csharp
@@ -205,6 +272,10 @@ Every request includes Ed25519-signed headers: `X-Machine-Id`, `X-Timestamp`, `X
 | `ListSecretsAsync()` | `Task<List<SecretListItem>>` | List all accessible secrets |
 | `ListSecretsByProjectAsync(projectId)` | `Task<List<SecretListItem>>` | List secrets in a project |
 | `ExportAsync(projectId?)` | `Task<Dictionary<string, string>>` | Export as env map |
+| `Watch(secretId, callback)` | `void` | Watch a secret for changes |
+| `Unwatch(secretId)` | `void` | Stop watching a secret |
+| `SetPollInterval(seconds)` | `void` | Set poll interval (min 10s) |
+| `Close()` | `void` | Stop all watches, shut down polling |
 
 ## Dependencies
 
