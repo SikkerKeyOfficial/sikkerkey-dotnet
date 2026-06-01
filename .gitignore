@@ -1,4 +1,5 @@
 /test/
+push.sh
 bin/
 obj/
 *.user

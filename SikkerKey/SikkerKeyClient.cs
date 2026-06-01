@@ -40,6 +40,7 @@ public sealed class SikkerKeyClient : IDisposable
     private static readonly HashSet<int> RetryableCodes = [429, 503];
     private const int MaxRetries = 3;
     private static readonly int[] BackoffMs = [1000, 2000, 4000];
+    private const string DefaultApiUrl = "https://api.sikkerkey.com";
 
     private readonly ConcurrentDictionary<string, Action<WatchEvent>> _watchers = new();
     private CancellationTokenSource? _pollCts;
@@ -59,6 +60,58 @@ public sealed class SikkerKeyClient : IDisposable
     {
         var identityFile = ResolveIdentity(vaultOrPath);
         var (identity, privateKey) = LoadIdentity(identityFile);
+        return new SikkerKeyClient(identity, privateKey);
+    }
+
+    /// <summary>
+    /// Bootstrap a memory-only ephemeral identity for serverless / read-only
+    /// filesystem environments that have no identity on disk.
+    /// <para>
+    /// Generates an Ed25519 keypair in memory, registers an ephemeral machine
+    /// with the enrollment token, and returns a client whose identity lives only
+    /// in process memory; nothing is written to disk. Enrollment happens once,
+    /// here; the returned client then behaves exactly like one from
+    /// <see cref="Create"/>. The ephemeral machine lives for the lifetime set on
+    /// the token; reading after it expires throws <see cref="AuthenticationException"/>,
+    /// so size the token's machine lifetime to the workload. The common path is
+    /// to read secrets at startup and hold the values.
+    /// </para>
+    /// </summary>
+    /// <param name="vaultId">The vault ID (<c>vault_...</c>).</param>
+    /// <param name="token">The plaintext of an enrollment token.</param>
+    /// <param name="hostname">Hostname recorded on the machine. Defaults to <c>$HOSTNAME</c>, then <c>serverless</c>. Must match the token's hostname pattern if one is set.</param>
+    /// <param name="name">Optional machine name. Overridden when the token defines a name pattern.</param>
+    public static async Task<SikkerKeyClient> BootstrapInMemoryAsync(
+        string vaultId,
+        string token,
+        string? hostname = null,
+        string? name = null)
+    {
+        if (string.IsNullOrEmpty(vaultId))
+            throw new ConfigurationException("BootstrapInMemoryAsync requires a vault ID");
+        if (string.IsNullOrEmpty(token))
+            throw new ConfigurationException("BootstrapInMemoryAsync requires an enrollment token");
+
+        // SikkerKey is a managed service; the API URL is fixed. The env override is for local dev only.
+        var rawUrl = Environment.GetEnvironmentVariable("SIKKERKEY_API_URL") ?? DefaultApiUrl;
+        if (!rawUrl.StartsWith("https://") && !rawUrl.StartsWith("http://localhost"))
+            throw new ConfigurationException($"API URL must use HTTPS: {rawUrl}. Use http://localhost only for local development.");
+        var apiUrl = rawUrl.TrimEnd('/');
+
+        // Generate the keypair in memory. The private key never leaves this process.
+        var (privateKey, publicKeyB64) = Ed25519PrivateKey.Generate();
+
+        var host = hostname ?? Environment.GetEnvironmentVariable("HOSTNAME") ?? "serverless";
+        var bodyDict = new Dictionary<string, string>
+        {
+            ["token"] = token,
+            ["publicKey"] = publicKeyB64,
+            ["hostname"] = host,
+        };
+        if (name != null) bodyDict["name"] = name;
+        var body = JsonSerializer.Serialize(bodyDict);
+
+        var identity = await EnrollRegisterAsync(apiUrl, vaultId, body);
         return new SikkerKeyClient(identity, privateKey);
     }
 
@@ -396,6 +449,45 @@ public sealed class SikkerKeyClient : IDisposable
         throw lastError ?? new ApiException($"Request failed after {MaxRetries} retries", 0);
     }
 
+    private static async Task<Identity> EnrollRegisterAsync(string apiUrl, string vaultId, string body)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        var url = $"{apiUrl}/v1/{vaultId}/enroll/register";
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+
+        int code;
+        string responseBody;
+        try
+        {
+            var response = await http.SendAsync(request);
+            code = (int)response.StatusCode;
+            responseBody = await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        {
+            throw new ApiException($"Enrollment network error: {e.Message}", 0);
+        }
+
+        if (code is >= 200 and < 300)
+        {
+            var doc = JsonDocument.Parse(responseBody).RootElement;
+            var machineId = doc.TryGetProperty("machineId", out var mid) ? mid.GetString() : null;
+            var vId = doc.TryGetProperty("vaultId", out var vd) ? vd.GetString() : null;
+            if (string.IsNullOrEmpty(machineId) || string.IsNullOrEmpty(vId))
+                throw new ApiException("Malformed enrollment response", code);
+            var machineName = doc.TryGetProperty("machineName", out var mn) ? mn.GetString() ?? "" : "";
+            return new Identity(machineId!, machineName, vId!, apiUrl, "");
+        }
+
+        string errorMsg;
+        try { errorMsg = JsonDocument.Parse(responseBody).RootElement.GetProperty("error").GetString() ?? responseBody; }
+        catch { errorMsg = string.IsNullOrEmpty(responseBody) ? $"HTTP {code}" : responseBody; }
+        throw MakeException(code, errorMsg);
+    }
+
     // ── Identity resolution ──
 
     private static string GetBaseDir() =>
@@ -527,6 +619,18 @@ internal sealed class Ed25519PrivateKey
     private readonly NSec.Cryptography.Key _key;
 
     private Ed25519PrivateKey(NSec.Cryptography.Key key) => _key = key;
+
+    /// <summary>
+    /// Generate a new in-memory Ed25519 key. Returns the wrapper and the raw
+    /// 32-byte public key as standard base64 (for enrollment).
+    /// </summary>
+    public static (Ed25519PrivateKey, string) Generate()
+    {
+        var algorithm = NSec.Cryptography.SignatureAlgorithm.Ed25519;
+        var key = NSec.Cryptography.Key.Create(algorithm);
+        var rawPub = key.PublicKey.Export(NSec.Cryptography.KeyBlobFormat.RawPublicKey);
+        return (new Ed25519PrivateKey(key), Convert.ToBase64String(rawPub));
+    }
 
     public static Ed25519PrivateKey Load(string pemPath)
     {
