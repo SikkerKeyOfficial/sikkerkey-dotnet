@@ -479,7 +479,13 @@ public sealed class SikkerKeyClient : IDisposable
             if (string.IsNullOrEmpty(machineId) || string.IsNullOrEmpty(vId))
                 throw new ApiException("Malformed enrollment response", code);
             var machineName = doc.TryGetProperty("machineName", out var mn) ? mn.GetString() ?? "" : "";
-            return new Identity(machineId!, machineName, vId!, apiUrl, "");
+            // Enrollment ran against the backend (apiUrl); runtime reads go to the
+            // retrieval plane the backend hands back. Fall back to the enroll URL
+            // only if an older endpoint omits it.
+            var readUrl = doc.TryGetProperty("apiUrl", out var au) && !string.IsNullOrEmpty(au.GetString())
+                ? au.GetString()!
+                : apiUrl;
+            return new Identity(machineId!, machineName, vId!, readUrl, "");
         }
 
         string errorMsg;

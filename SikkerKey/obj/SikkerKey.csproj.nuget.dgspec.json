@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/SikkerKey.csproj": {}
+    "/home/jack/Desktop/Sikker/sikker-key/sikkerkey-sdks/dotnet/SikkerKey/SikkerKey.csproj": {}
   },
   "projects": {
-    "/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/SikkerKey.csproj": {
+    "/home/jack/Desktop/Sikker/sikker-key/sikkerkey-sdks/dotnet/SikkerKey/SikkerKey.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/SikkerKey.csproj",
+        "projectUniqueName": "/home/jack/Desktop/Sikker/sikker-key/sikkerkey-sdks/dotnet/SikkerKey/SikkerKey.csproj",
         "projectName": "SikkerKey",
-        "projectPath": "/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/SikkerKey.csproj",
+        "projectPath": "/home/jack/Desktop/Sikker/sikker-key/sikkerkey-sdks/dotnet/SikkerKey/SikkerKey.csproj",
         "packagesPath": "/home/jack/.nuget/packages/",
-        "outputPath": "/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/obj/",
+        "outputPath": "/home/jack/Desktop/Sikker/sikker-key/sikkerkey-sdks/dotnet/SikkerKey/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/jack/.nuget/NuGet/NuGet.Config"

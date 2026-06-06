@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "3rst+N5+WkFMX51AQVlOci7JLAMFornYX6nFfGStvxdjIW3u4YFRm9l/MYeiFSU7CswLunu7s+2p8GUllByjLg==",
+  "dgSpecHash": "ybolXwX/52wavg9XystNO3+qhLNdgRLk5BCa1zL1kgQJvOnCdJ/lBMuWH/U+asXXO/25GCwZmbFI7mmIYoStmA==",
   "success": true,
-  "projectFilePath": "/home/jack/Desktop/Sikker/sikker-key/sdks/dotnet/SikkerKey/SikkerKey.csproj",
+  "projectFilePath": "/home/jack/Desktop/Sikker/sikker-key/sikkerkey-sdks/dotnet/SikkerKey/SikkerKey.csproj",
   "expectedPackageFiles": [
     "/home/jack/.nuget/packages/libsodium/1.0.20.1/libsodium.1.0.20.1.nupkg.sha512",
     "/home/jack/.nuget/packages/nsec.cryptography/25.4.0/nsec.cryptography.25.4.0.nupkg.sha512"
