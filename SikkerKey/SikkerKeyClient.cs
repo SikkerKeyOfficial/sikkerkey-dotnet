@@ -49,6 +49,19 @@ public sealed class SikkerKeyClient : IDisposable
     private readonly object _pollLock = new();
     private bool _disposed;
 
+    // Off until EnableCache is called. When off, a read touches no cache code and
+    // the key below is never derived.
+    private bool _cacheEnabled;
+    private CacheOptions _cacheOpts = new();
+    private SecretCache? _cache;
+
+    // Statuses that mean no authoritative answer reached us from the origin, so the
+    // fallback cache may serve: 502/504 (gateway), 503 (temporarily unavailable),
+    // 520–527 (the Cloudflare origin-error family), 530 (edge can't reach origin).
+    // 401/403/404/429 (authoritative) and 500/501 (origin ran and errored) are excluded.
+    private static readonly HashSet<int> UnavailableStatuses =
+        [502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530];
+
     private SikkerKeyClient(Identity identity, Ed25519PrivateKey privateKey)
     {
         _identity = identity;
@@ -120,14 +133,71 @@ public sealed class SikkerKeyClient : IDisposable
     public string VaultId => _identity.VaultId;
     public string ApiUrl => _identity.ApiUrl;
 
+    /// <summary>
+    /// Enable the on-disk fallback cache and return this client (chainable):
+    /// <code>var sk = SikkerKeyClient.Create().EnableCache();</code>
+    /// While enabled, every secret read is written to an encrypted, identity-bound
+    /// file under <c>~/.sikkerkey/vaults/&lt;vault&gt;/cache/</c>, and served from there
+    /// when the retrieval plane is unreachable (a network failure, or a gateway/origin
+    /// error like 502/504 or a Cloudflare 52x) — never when the server returns an
+    /// authoritative answer (access denied, deleted, bad auth). Off by default: until
+    /// this is called, a read never touches the cache.
+    /// </summary>
+    public SikkerKeyClient EnableCache(CacheOptions? options = null)
+    {
+        _cacheEnabled = true;
+        _cacheOpts = options ?? new CacheOptions();
+        return this;
+    }
+
     // ── Read ──
 
     /// <summary>Fetch a secret value by ID.</summary>
     public async Task<string> GetSecretAsync(string secretId)
     {
-        var body = await RequestAsync("GET", $"/v1/secret/{secretId}");
-        return JsonDocument.Parse(body).RootElement.GetProperty("value").GetString()!;
+        // Fast path: caching off → behave exactly as before, touching no cache code.
+        if (!_cacheEnabled)
+        {
+            var b = await RequestAsync("GET", $"/v1/secret/{secretId}");
+            return JsonDocument.Parse(b).RootElement.GetProperty("value").GetString()!;
+        }
+        try
+        {
+            var b = await RequestAsync("GET", $"/v1/secret/{secretId}");
+            var value = JsonDocument.Parse(b).RootElement.GetProperty("value").GetString()!;
+            try { GetCache().Store(secretId, "", value, null); } catch { /* caching is best-effort */ }
+            return value;
+        }
+        catch (Exception e) when (IsUnavailable(e))
+        {
+            var hit = LoadFromCache(secretId);
+            if (hit != null)
+            {
+                // Transparent by default; the app observes fallback only via OnFallback.
+                _cacheOpts.OnFallback?.Invoke(secretId, hit.CachedAt);
+                return hit.Value;
+            }
+            throw;
+        }
     }
+
+    private SecretCache GetCache() =>
+        _cache ??= new SecretCache(_identity.VaultId, _identity.MachineId,
+            SecretCache.DeriveKey(_privateKey.Seed, _identity.VaultId));
+
+    private CacheResult? LoadFromCache(string secretId)
+    {
+        CacheResult? hit;
+        try { hit = GetCache().Load(secretId); } catch { return null; }
+        if (hit == null) return null;
+        if (_cacheOpts.MaxAge is { } maxAge &&
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds() - hit.CachedAt > maxAge.TotalSeconds)
+            return null;
+        return hit;
+    }
+
+    private static bool IsUnavailable(Exception e) =>
+        e is ApiException api && (api.HttpStatus == 0 || UnavailableStatuses.Contains(api.HttpStatus));
 
     /// <summary>Fetch a structured secret as a dictionary.</summary>
     public async Task<Dictionary<string, string>> GetFieldsAsync(string secretId)
@@ -623,8 +693,17 @@ internal record Identity(
 internal sealed class Ed25519PrivateKey
 {
     private readonly NSec.Cryptography.Key _key;
+    private readonly byte[] _seed;
 
-    private Ed25519PrivateKey(NSec.Cryptography.Key key) => _key = key;
+    private Ed25519PrivateKey(NSec.Cryptography.Key key, byte[] seed)
+    {
+        _key = key;
+        _seed = seed;
+    }
+
+    /// <summary>The 32-byte Ed25519 seed — input keying material for the fallback
+    /// cache's key derivation. Stays within the process; never transmitted.</summary>
+    public byte[] Seed => _seed;
 
     /// <summary>
     /// Generate a new in-memory Ed25519 key. Returns the wrapper and the raw
@@ -633,9 +712,12 @@ internal sealed class Ed25519PrivateKey
     public static (Ed25519PrivateKey, string) Generate()
     {
         var algorithm = NSec.Cryptography.SignatureAlgorithm.Ed25519;
-        var key = NSec.Cryptography.Key.Create(algorithm);
+        // Generate the seed ourselves and import it, so the wrapper can retain it
+        // (for the cache) while the NSec key itself stays non-exportable.
+        var seed = RandomNumberGenerator.GetBytes(32);
+        var key = NSec.Cryptography.Key.Import(algorithm, seed, NSec.Cryptography.KeyBlobFormat.RawPrivateKey);
         var rawPub = key.PublicKey.Export(NSec.Cryptography.KeyBlobFormat.RawPublicKey);
-        return (new Ed25519PrivateKey(key), Convert.ToBase64String(rawPub));
+        return (new Ed25519PrivateKey(key, seed), Convert.ToBase64String(rawPub));
     }
 
     public static Ed25519PrivateKey Load(string pemPath)
@@ -654,7 +736,7 @@ internal sealed class Ed25519PrivateKey
         var seed = pkcs8[^32..];
         var algorithm = NSec.Cryptography.SignatureAlgorithm.Ed25519;
         var key = NSec.Cryptography.Key.Import(algorithm, seed, NSec.Cryptography.KeyBlobFormat.RawPrivateKey);
-        return new Ed25519PrivateKey(key);
+        return new Ed25519PrivateKey(key, seed);
     }
 
     public byte[] Sign(byte[] message)

@@ -51,7 +51,7 @@ public class RateLimitedException : ApiException
     public RateLimitedException(string message) : base(message, 429) { }
 }
 
-/// <summary>503 — server is sealed, awaiting unseal.</summary>
+/// <summary>503 — the service is temporarily unavailable.</summary>
 public class ServerSealedException : ApiException
 {
     public ServerSealedException(string message) : base(message, 503) { }

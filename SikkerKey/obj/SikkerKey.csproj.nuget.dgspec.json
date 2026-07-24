@@ -5,7 +5,7 @@
   },
   "projects": {
     "/home/jack/Desktop/Sikker/sikker-key/sikkerkey-sdks/dotnet/SikkerKey/SikkerKey.csproj": {
-      "version": "1.0.0",
+      "version": "1.3.0",
       "restore": {
         "projectUniqueName": "/home/jack/Desktop/Sikker/sikker-key/sikkerkey-sdks/dotnet/SikkerKey/SikkerKey.csproj",
         "projectName": "SikkerKey",
